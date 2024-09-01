@@ -49,7 +49,7 @@ def generate_board_image():
     image.save("chessboard.png")
 
 # Command to start the interaction by choosing the game mode
-@bot.command(name='play')
+@bot.command(name='play',aliases=['start','p'])
 async def start_interaction(ctx):
     # Create a view for the mode selection buttons
     mode_view = discord.ui.View()
@@ -175,10 +175,12 @@ async def make_move(ctx, move: str):
 # Command to let AI make a move
 @bot.command(name='ai', aliases=['a'])
 async def ai_move(ctx):
-    global board, current_turn
+    global board, current_turn, player_color
+
     if board.is_game_over():
         await ctx.send("Game over!")
         return
+
     try:
         engine = chess.engine.SimpleEngine.popen_uci("/usr/games/stockfish")
     except FileNotFoundError:
@@ -189,12 +191,27 @@ async def ai_move(ctx):
         result = engine.play(board, chess.engine.Limit(time=difficulty_map[difficulty]))
         board.push(result.move)
         generate_board_image()
+
         await ctx.send(f"Stockfish plays `{result.move}`.", file=discord.File("chessboard.png"))
-        current_turn = chess.WHITE
+
+        # Check if the game is over after the AI's move
+        if board.is_game_over():
+            await ctx.send("Game over!")
+        else:
+            current_turn = chess.BLACK if current_turn == chess.WHITE else chess.WHITE
+
+            # Automatically handle the player's turn if AI moves first
+            if current_turn == player_color:
+                await ctx.send(f"It's your turn to move! Use `/move <move>` to make a move.")
+            else:
+                # AI's turn again (in case of another cycle, though this typically shouldn't happen immediately)
+                await ai_move(ctx)
+
     except Exception as e:
         await ctx.send(f"Error with AI move: {e}")
     finally:
         engine.quit()
+
 
 # Command to provide a hint for the next move
 @bot.command(name='hint', aliases=['h'])
@@ -222,7 +239,7 @@ async def provide_hint(ctx):
 @bot.command(name='exit', aliases=['quit', 'q'])
 async def exit_game(ctx):
     await ctx.send("Exiting the game. Bye!")
-    await bot.logout()
+    await bot.close()
 
 # Run the bot
 if TOKEN is None:
