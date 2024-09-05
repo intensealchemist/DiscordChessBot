@@ -9,13 +9,10 @@ from io import BytesIO
 import random
 import asyncio
 from stockfish import Stockfish
-from flask import Flask, request
 from threading import Thread
 import time
 import threading
-
-app = Flask(__name__)
-
+ 
 # Initialize bot with command prefix and intents
 intents = discord.Intents.default()
 intents.message_content = True
@@ -25,8 +22,7 @@ bot = commands.Bot(command_prefix=commands.when_mentioned_or("/", "!", "."),
 # Load environment variable for bot token
 TOKEN = os.getenv('DISCORD_BOT_TOKEN')
 
-stockfish = Stockfish(
-    "/nix/store/6mazfacbfr2c2di734v0rb4820ipa1xb-stockfish-15/bin/stockfish")
+stockfish = Stockfish("/usr/games/stockfish")
 
 
 @bot.event
@@ -63,8 +59,6 @@ difficulty_map = {
 }
 
 # Function to generate and save the board image with move history
-
-
 def generate_board_image(board, perspective='white'):
     # Constants
     square_size = 35
@@ -190,6 +184,45 @@ def generate_board_image(board, perspective='white'):
 
 # A dictionary to hold the game state for each pair of players
 games = {}
+class Leaderboard:
+    def __init__(self):
+        self.scores = {}
+
+    def update_score(self, player: discord.User, result: str):
+        if player not in self.scores:
+            self.scores[player] = {"wins": 0, "losses": 0, "draws": 0}
+        if result == "win":
+            self.scores[player]["wins"] += 1
+        elif result == "loss":
+            self.scores[player]["losses"] += 1
+        elif result == "draw":
+            self.scores[player]["draws"] += 1
+
+    def display_leaderboard(self):
+        sorted_scores = sorted(self.scores.items(), key=lambda item: item[1]["wins"], reverse=True)
+        leaderboard_str = "🏆 **Leaderboard** 🏆\n"
+        for player, stats in sorted_scores:
+            leaderboard_str += f"{player.mention}: {stats['wins']} Wins, {stats['losses']} Losses, {stats['draws']} Draws\n"
+        return leaderboard_str
+
+# Create an instance of the Leaderboard class
+leaderboard = Leaderboard()
+
+# Command to display the leaderboard
+@bot.command(name='leaderboard',aliases=['lb','l'])
+async def show_leaderboard(ctx):
+    leaderboard_message = leaderboard.display_leaderboard()
+    if leaderboard_message:
+        await ctx.send(leaderboard_message)
+    else:
+        await ctx.send("No scores recorded yet!")
+
+# Example of updating the leaderboard when a game concludes
+@bot.command(name='endgame')
+async def end_game(ctx, result: str):
+    # Example: assuming the command is used like !endgame win
+    leaderboard.update_score(ctx.author, result)
+    await ctx.send(f"{ctx.author.mention}'s score has been updated with a {result}!")
 
 
 # Check for win condition, etc.
@@ -206,7 +239,6 @@ async def resign(ctx):
 
     await ctx.send(
         f"{ctx.author.mention} has resigned. {opponent.mention} wins!")
-
 
 # Command to start the interaction by choosing the game mode
 @bot.command(name='play', aliases=['start', 'p'])
@@ -393,7 +425,7 @@ async def choose_difficulty(ctx):
 
 
 # Command to make a move
-@bot.command(name='move', aliases=['mv'])
+@bot.command(name='move', aliases=['mv','m'])
 async def make_move(ctx, move: str):
     global board, mode, current_turn, player_color
 
@@ -490,7 +522,6 @@ async def ai_move(ctx):
     if board.is_game_over():
         await ctx.send("Game over!")
         return
-
     try:
         # Set the current position on the board for Stockfish
         stockfish.set_fen_position(board.fen())
@@ -520,7 +551,6 @@ async def ai_move(ctx):
             else:
                 # If it's still the AI's turn, recursively call ai_move
                 await ai_move(ctx)
-
     except Exception as e:
         await ctx.send(f"Error with AI move: {e}")
 
@@ -575,17 +605,4 @@ async def exit_game(ctx):
 async def on_ready():
     print(f'Logged in as {bot.user} (ID: {bot.user.id})')
     print('------')
-
-
-# Run the bot
-
-
-@app.route('/')
-def home():
-    return "Bot is running!"
-
-
-if __name__ == "__main__":
-    # Run the Flask app in a thread
-    threading.Thread(target=lambda: app.run(host='0.0.0.0', port=8080)).start()
-    bot.run(TOKEN)
+bot.run(TOKEN)
