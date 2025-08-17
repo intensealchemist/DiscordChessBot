@@ -3,3 +3,4 @@ python-chess
 cairosvg
 Pillow
 stockfish
+python-dotenv>=1.0.0

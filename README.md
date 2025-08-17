@@ -47,7 +47,7 @@ Windows PowerShell example:
 
 ```powershell
 $env:DISCORD_BOT_TOKEN = "YOUR_TOKEN_HERE"
-$env:STOCKFISH_PATH = "C:\\path\\to\\stockfish.exe"  # optional
+$env:STOCKFISH_PATH = "C:\\path\\to\\stockfish.exe" 
 $env:CHESSBOT_DB = "C:\\path\\to\\chessbot.db"            # optional
 ```
 
@@ -69,48 +69,60 @@ Environment variables used by the bot:
 
 ## Commands Overview
 
-- /challenge @user — start a 1v1 match
-- /move e2e4 — make a move (UCI format). Aliases: /mv, /m
-- /ai — make AI move (if it’s AI’s turn). Alias: /a
-- /hint — get the engine’s suggested move
-- /resign — resign the current game
-- /exit — exit and clear the current game session. Aliases: /quit, /q
-- /leaderboard — top 10 by ELO and your global rank. Aliases: /lb, /l
-- /tournament_create <name> — create a tournament
-- /tournament_join <id> — join a tournament
-- /tournament_start <id> — start the tournament (Round 1)
-- /tournament_bracket <id> — display the current bracket
+- !start_ai — start an AI game (aliases: !play_ai, !ai_game)
+- !p — quick alias to start an AI game
+- !solo — start a Solo practice game (you play White)
+- !challenge @user — start a 1v1 match
+- !move e2e4 — make a move (UCI format). Aliases: !mv, !m
+- !ai — make AI move (if it’s AI’s turn). Alias: !a
+- !hint — get the engine’s suggested move
+- !resign — resign the current game
+- !exit — exit and clear the current game session. Aliases: !quit, !q
+- !leaderboard — top 10 by ELO and your global rank. Aliases: !lb, !l
+- !tournament_create <name> — create a tournament
+- !tournament_join <id> — join a tournament
+- !tournament_start <id> — start the tournament (Round 1)
+- !tournament_bracket <id> — display the current bracket
+
+Note: These are message-prefix commands (prefixes: `/`, `!`, `.`). For example, you can type `!start_ai` or `.p`. They are not “slash” application commands.
 
 ### Quick Commands Table
 
 | Command | Description |
 |---|---|
-| /challenge @user | Start a 1v1 match with a user |
-| /move e2e4 | Make a UCI move in the current game (aliases: /mv, /m) |
-| /ai | Engine plays if it is AI's turn (alias: /a) |
-| /hint | Show engine's suggested move |
-| /resign | Resign your current game |
-| /exit | Exit and clear current game session (aliases: /quit, /q) |
-| /leaderboard | Top 10 by ELO + your rank (aliases: /lb, /l) |
-| /tournament_create <name> | Create a tournament |
-| /tournament_join <id> | Join a tournament |
-| /tournament_start <id> | Start the tournament (Round 1) |
-| /tournament_bracket <id> | Display the current bracket |
+| !start_ai | Start an AI game (aliases: !play_ai, !ai_game) |
+| !p | Quick alias to start an AI game |
+| !solo | Start a Solo practice game |
+| !challenge @user | Start a 1v1 match with a user |
+| !move e2e4 | Make a UCI move (aliases: !mv, !m) |
+| !ai | Engine plays if it is AI's turn (alias: !a) |
+| !hint | Show engine's suggested move |
+| !resign | Resign your current game |
+| !exit | Exit and clear current game session (aliases: !quit, !q) |
+| !leaderboard | Top 10 by ELO + your rank (aliases: !lb, !l) |
+| !tournament_create <name> | Create a tournament |
+| !tournament_join <id> | Join a tournament |
+| !tournament_start <id> | Start the tournament (Round 1) |
+| !tournament_bracket <id> | Display the current bracket |
 
-### Tournament Commands
+## Usage examples
 
-- /tournament_create <name> — create a tournament
-- /tournament_join <tournament_id> — join
-- /tournament_start <tournament_id> — pairings + start Round 1
-- /tournament_bracket <tournament_id> — view bracket
-
-Flow:
-
-1) Create and join while status is "created".
-2) Start to generate Round 1; random pairings with bye if odd players.
-3) Matches start; players use /move normally. On checkmate, the winner advances.
-4) Draw handling: a tiebreak match automatically starts with swapped colors. If the tiebreak also draws, a random winner advances. Brackets label tiebreaks with (TB).
-5) Rounds continue automatically until one winner remains.
+- Start AI game quickly
+  ```text
+  !p
+  ```
+- Start AI game (explicit)
+  ```text
+  !start_ai
+  ```
+- Move in current game
+  ```text
+  !move e2e4
+  ```
+- Ask engine to move (when it’s its turn)
+  ```text
+  !ai
+  ```
 
 ## Persistence and ELO
 
@@ -127,15 +139,23 @@ Coordinates are drawn around the board.
 
 ## Screenshots
 
-Below are placeholders for board previews. You can generate them by running the bot locally, starting a game, and saving the posted `chessboard.png`.
+Here are some live screenshots from the bot running locally.
 
-Place your screenshots under `assets/` and update the paths below if needed.
+- AI game start and board render
 
-![Classic Theme](assets/theme-classic.png)
-![Green Theme](assets/theme-green.png)
-![Blue Theme](assets/theme-blue.png)
+  ![AI Game Start](assets/Screenshot%202025-08-17%20184027.png)
 
-Tip: Include a couple of example positions to showcase highlights (check, last move, etc.).
+- Difficulty selection and actions
+
+  ![Difficulty Selection](assets/Screenshot%202025-08-17%20184357.png)
+
+- Move updates and board refresh
+
+  ![Move Update](assets/Screenshot%202025-08-17%20184432.png)
+
+- Additional UI/flow
+
+  ![Flow](assets/Screenshot%202025-08-17%20185056.png)
 
 ## Deployment
 

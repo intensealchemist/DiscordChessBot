@@ -1,0 +1,65 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment files
+.env
+.env.*
+*.env
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE/editor
+.vscode/
+.idea/
+*.iml
+*.sublime-workspace
+*.sublime-project
+
+# Logs
+logs/
+*.log
+
+# Testing/coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.mypy_cache/
+.pytype/
+
+# Build/dist
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Docker
+/docker/*.env
+
+# Project-specific outputs
+chessboard.png
+*.db
+chessbot.db
+/data/
+
+# Images generated during runs (keep repo images in root and assets/)
+!assets/
+!*.png
+!*.jpg
+!*.jpeg
+!*.gif
+
+# Ignore any local settings override files
+local_settings.py

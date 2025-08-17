@@ -17,6 +17,13 @@ import math
 import datetime
 import chess.pgn
 
+# Try to load .env if present (optional dependency)
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:
+    pass
+
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix=commands.when_mentioned_or("/", "!", "."),
@@ -214,6 +221,51 @@ difficulty_map = {
     'hardcore': 20,
 }
 
+async def choose_difficulty(ctx):
+    """Show buttons to set AI difficulty and configure Stockfish skill level."""
+    global difficulty
+    view = discord.ui.View(timeout=30)
+
+    # Create one button per difficulty
+    for level, skill in difficulty_map.items():
+        btn = discord.ui.Button(label=level.capitalize(), style=discord.ButtonStyle.primary)
+
+        async def on_click(interaction: discord.Interaction, level=level, skill=skill):
+            global difficulty
+            difficulty = level
+            try:
+                # Configure engine skill level if supported
+                stockfish.set_skill_level(int(skill))
+            except Exception:
+                pass
+            await interaction.response.send_message(f"Difficulty set to `{difficulty}`.", ephemeral=True)
+            # If it's AI's turn now, make it move
+            if mode == 'ai' and not board.is_game_over() and current_turn != player_color:
+                await ai_move(ctx)
+
+        btn.callback = on_click
+        view.add_item(btn)
+
+    # Random button
+    rnd = discord.ui.Button(label="Random", style=discord.ButtonStyle.secondary)
+
+    async def on_random(interaction: discord.Interaction):
+        global difficulty
+        level = random.choice(list(difficulty_map.keys()))
+        difficulty = level
+        try:
+            stockfish.set_skill_level(int(difficulty_map[level]))
+        except Exception:
+            pass
+        await interaction.response.send_message(f"Difficulty set to `{difficulty}`.", ephemeral=True)
+        if mode == 'ai' and not board.is_game_over() and current_turn != player_color:
+            await ai_move(ctx)
+
+    rnd.callback = on_random
+    view.add_item(rnd)
+
+    await ctx.send("Please choose the AI difficulty level:", view=view)
+
 def generate_board_image(board, perspective='white'):
     square_size = 35
     board_size = 8 * square_size
@@ -373,7 +425,7 @@ async def show_leaderboard(ctx):
     leaderboard_message = leaderboard.display_leaderboard(ctx.author.id)
     await ctx.send(leaderboard_message)
 
-@bot.command()
+@bot.command(name='resign')
 async def resign(ctx):
     game = games.pop(ctx.author.id, None)
 
@@ -410,22 +462,24 @@ async def resign(ctx):
         f"{ctx.author.mention} has resigned. {opponent.mention} wins!")
 
 async def start_solo_game(ctx):
-    global player_color, current_turn
+    global player_color, current_turn, mode
     board.reset()
     player_color = chess.WHITE
     current_turn = chess.WHITE
+    mode = 'solo'
 
     generate_board_image(board, perspective='white')
     await ctx.send("New chess game started in `Solo` mode! You are `white`.",
                    file=discord.File("chessboard.png"))
-    await ctx.send("It's your turn to move! Use `/move <move>` to make a move."
+    await ctx.send("It's your turn to move! Use `!move <uci>` (e.g., `!move e2e4`)."
                    )
 
 async def start_ai_game(ctx):
-    global player_color, current_turn
+    global player_color, current_turn, mode
     board.reset()
     player_color = random.choice([chess.WHITE, chess.BLACK])
     current_turn = chess.WHITE
+    mode = 'ai'
 
     color_text = "white" if player_color == chess.WHITE else "black"
     generate_board_image(board, perspective=color_text)
@@ -437,93 +491,65 @@ async def start_ai_game(ctx):
     if player_color == chess.BLACK:
         await ai_move(ctx)
 
-@bot.command()
+@bot.command(name='start_ai', aliases=['play_ai', 'ai_game'])
+async def cmd_start_ai(ctx):
+    await start_ai_game(ctx)
+
+@bot.command(name='p')
+async def cmd_p(ctx):
+    await start_ai_game(ctx)
+
+@bot.command(name='solo')
+async def cmd_start_solo(ctx):
+    await start_solo_game(ctx)
+
+@bot.command(name='challenge', aliases=['ch', 'c', 'duel'])
 async def challenge(ctx, opponent: discord.Member):
     if ctx.author == opponent:
         await ctx.send("You can't challenge yourself!")
         return
 
+    # Prevent overlapping games
     if ctx.author.id in games or opponent.id in games:
         await ctx.send("One of the players is already in a game!")
         return
-    # Challenger is white by default
-    games[ctx.author.id] = {
-        'opponent': opponent.id,
-        'board': chess.Board(),
-        'turn': ctx.author.id,
-        'mode': '1v1',
-        'white': ctx.author.id,
-        'black': opponent.id
-    }
-    games[opponent.id] = games[ctx.author.id] 
 
-    challenge_message = await ctx.send(
-        f"{ctx.author.mention} has challenged {opponent.mention} to a 1v1 chess match! React with ✅ to accept."
-    )
-
-    await challenge_message.add_reaction('✅')
+    # Prepare game state but do not activate until accepted
+    local_board = chess.Board()
+    challenge_msg = await ctx.send(
+        f"{ctx.author.mention} has challenged {opponent.mention} to a 1v1 chess match! React with ✅ to accept.")
+    try:
+        await challenge_msg.add_reaction('✅')
+    except Exception:
+        pass
 
     def check(reaction, user):
-        return user == opponent and str(
-            reaction.emoji
-        ) == '✅' and reaction.message.id == challenge_message.id
-
-    try:
-        await bot.wait_for('reaction_add', timeout=10.0, check=check)
-    except asyncio.TimeoutError:
-        await ctx.send(
-            f"{opponent.mention} did not respond in time. Challenge expired.")
-        games.pop(ctx.author.id, None)
-        games.pop(opponent.id, None)
-    else:
-        await ctx.send(
-            f"{opponent.mention} accepted the challenge! {ctx.author.mention}, it's your turn to move! Use `/move <move>` to make a move."
+        return (
+            user.id == opponent.id and str(reaction.emoji) == '✅' and reaction.message.id == challenge_msg.id
         )
 
-async def choose_difficulty(ctx):
-    difficulty_view = discord.ui.View()
+    try:
+        await bot.wait_for('reaction_add', timeout=60.0, check=check)
+    except asyncio.TimeoutError:
+        await ctx.send(f"{opponent.mention} did not respond in time. Challenge expired.")
+        return
 
-    for level in difficulty_map.keys():
-        button = discord.ui.Button(label=level.capitalize(),
-                                   style=discord.ButtonStyle.primary)
-        button.custom_id = level
-        difficulty_view.add_item(button)
+    # Set up mirrored game entries for both players
+    games[ctx.author.id] = {
+        'opponent': opponent.id,
+        'board': local_board,
+        'turn': ctx.author.id,  # Challenger (White) moves first
+        'mode': '1v1',
+        'white': ctx.author.id,
+        'black': opponent.id,
+    }
+    games[opponent.id] = games[ctx.author.id]
 
-    random_button = discord.ui.Button(label="Random",
-                                      style=discord.ButtonStyle.secondary)
-    random_button.custom_id = 'random'
-    difficulty_view.add_item(random_button)
-
-    async def on_difficulty_button_click(interaction: discord.Interaction):
-        global difficulty
-
-        button_id = interaction.data[
-            'custom_id'] 
-        difficulty = button_id if button_id != 'random' else random.choice(
-            list(difficulty_map.keys()))
-        await interaction.response.send_message(
-            f"Difficulty set to `{difficulty}`.", ephemeral=True)
-
-        if mode == 'ai' and player_color == chess.BLACK:
-            if current_turn == player_color:
-                await ctx.send(
-                    f"It's your turn to move! Use `/move <move>` to make a move."
-                )
-            else:
-                await ai_move(ctx)
-        else:
-            if current_turn == player_color:
-                await ctx.send(
-                    f"It's your turn to move! Use `/move <move>` to make a move."
-                )
-            else:
-                await ctx.send(f"Waiting for the opponent's move.")
-
-    for item in difficulty_view.children:
-        item.callback = on_difficulty_button_click
-
-    await ctx.send("Please choose the AI difficulty level:",
-                   view=difficulty_view)
+    generate_board_image(local_board, perspective='white')
+    await ctx.send(
+        f"{opponent.mention} accepted the challenge! {ctx.author.mention} is White and moves first. Use `!move <uci>` (e.g., `!move e2e4`).",
+        file=discord.File("chessboard.png")
+    )
 
 @bot.command(name='move', aliases=['mv','m'])
 async def make_move(ctx, move: str):
@@ -679,7 +705,7 @@ async def ai_move(ctx):
         else:
             if current_turn == player_color:
                 await ctx.send(
-                    f"It's your turn to move! Use `/move <move>` to make a move."
+                    f"It's your turn to move! Use `!move <move>` to make a move."
                 )
             else:
                 # If it's still the AI's turn, recursively call ai_move
@@ -777,7 +803,7 @@ def _start_pending_matches_in_round(ctx, t_id: int, round_no: int):
     if matches:
         lines = [f"Starting Round {round_no} matches:"]
         for mid, w, b in matches:
-            lines.append(f"Match #{mid}: <@{w}> (White) vs <@{b}> (Black) — White to move. Use /move <uci>")
+            lines.append(f"Match #{mid}: <@{w}> (White) vs <@{b}> (Black) — White to move. Use `!move <uci>`")
         asyncio.create_task(ctx.send("\n".join(lines)))
 
 def _get_match_info(match_id: int):
@@ -964,10 +990,27 @@ async def exit_game(ctx):
     restart_view.add_item(restart_button)
 
     async def on_restart_button_click(interaction: discord.Interaction):
-        await interaction.response.send_message(
-            "Use `/play` to start Solo/AI or `/challenge @user` to start a PvP match.",
-            ephemeral=True
-        )
+        try:
+            # Acknowledge quickly; required before using followups
+            if not interaction.response.is_done():
+                await interaction.response.defer(ephemeral=True)
+            # Send guidance via followup (works even after initial defer)
+            await interaction.followup.send(
+                "Start a new game with message commands: `!p` (quick AI), `!start_ai`, `!solo`, or `!challenge @user`.",
+                ephemeral=True
+            )
+        except discord.NotFound:
+            # Interaction token expired or unknown — ignore gracefully
+            pass
+        except Exception as e:
+            try:
+                # Best-effort fallback
+                await interaction.followup.send(
+                    f"Unable to respond to the button interaction: {e}",
+                    ephemeral=True
+                )
+            except Exception:
+                pass
 
     restart_button.callback = on_restart_button_click
     await ctx.send("You can start a new game using the button below:",
