@@ -127,15 +127,6 @@ Coordinates are drawn around the board.
 
 ## Screenshots
 
-Below are placeholders for board previews. You can generate them by running the bot locally, starting a game, and saving the posted `chessboard.png`.
-
-Place your screenshots under `assets/` and update the paths below if needed.
-
-![Classic Theme](assets/theme-classic.png)
-![Green Theme](assets/theme-green.png)
-![Blue Theme](assets/theme-blue.png)
-
-Tip: Include a couple of example positions to showcase highlights (check, last move, etc.).
 
 ## Deployment
 
