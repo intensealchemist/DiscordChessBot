@@ -17,6 +17,8 @@ import math
 import datetime
 import chess.pgn
 
+from pathlib import Path
+
 # Try to load .env if present (optional dependency)
 try:
     from dotenv import load_dotenv
@@ -341,19 +343,25 @@ def generate_board_image(board, perspective='white'):
                   fill=text_color,
                   font=font)
 
+    # Load piece images from organized asset folders
+    base_dir = Path(__file__).parent
+    pieces_dir = base_dir / "assets" / "pieces"
+    white_dir = pieces_dir / "white"
+    black_dir = pieces_dir / "black"
+
     piece_images = {
-        'P': Image.open("white-pawn.png").resize((35, 35), Image.LANCZOS),
-        'R': Image.open("white-rook.png").resize((35, 35), Image.LANCZOS),
-        'N': Image.open("white-knight.png").resize((35, 35), Image.LANCZOS),
-        'B': Image.open("white-bishop.png").resize((35, 35), Image.LANCZOS),
-        'Q': Image.open("white-queen.png").resize((35, 35), Image.LANCZOS),
-        'K': Image.open("white-king.png").resize((35, 35), Image.LANCZOS),
-        'p': Image.open("black-pawn.png").resize((35, 35), Image.LANCZOS),
-        'r': Image.open("black-rook.png").resize((35, 35), Image.LANCZOS),
-        'n': Image.open("black-knight.png").resize((35, 35), Image.LANCZOS),
-        'b': Image.open("black-bishop.png").resize((35, 35), Image.LANCZOS),
-        'q': Image.open("black-queen.png").resize((35, 35), Image.LANCZOS),
-        'k': Image.open("black-king.png").resize((35, 35), Image.LANCZOS)
+        'P': Image.open(str(white_dir / "white-pawn.png")).resize((35, 35), Image.LANCZOS),
+        'R': Image.open(str(white_dir / "white-rook.png")).resize((35, 35), Image.LANCZOS),
+        'N': Image.open(str(white_dir / "white-knight.png")).resize((35, 35), Image.LANCZOS),
+        'B': Image.open(str(white_dir / "white-bishop.png")).resize((35, 35), Image.LANCZOS),
+        'Q': Image.open(str(white_dir / "white-queen.png")).resize((35, 35), Image.LANCZOS),
+        'K': Image.open(str(white_dir / "white-king.png")).resize((35, 35), Image.LANCZOS),
+        'p': Image.open(str(black_dir / "black-pawn.png")).resize((35, 35), Image.LANCZOS),
+        'r': Image.open(str(black_dir / "black-rook.png")).resize((35, 35), Image.LANCZOS),
+        'n': Image.open(str(black_dir / "black-knight.png")).resize((35, 35), Image.LANCZOS),
+        'b': Image.open(str(black_dir / "black-bishop.png")).resize((35, 35), Image.LANCZOS),
+        'q': Image.open(str(black_dir / "black-queen.png")).resize((35, 35), Image.LANCZOS),
+        'k': Image.open(str(black_dir / "black-king.png")).resize((35, 35), Image.LANCZOS)
     }
 
     for square in chess.SQUARES:

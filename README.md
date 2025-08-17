@@ -134,8 +134,30 @@ Note: These are message-prefix commands (prefixes: `/`, `!`, `.`). For example, 
 ## Piece Assets and Board Rendering
 
 Board images are saved as `chessboard.png` and posted to Discord.
-Piece PNGs are included (e.g., `white-king.png`, `black-queen.png`).
 Coordinates are drawn around the board.
+
+Piece PNGs are organized under `assets/pieces/`:
+
+```
+assets/
+  pieces/
+    white/
+      white-king.png
+      white-queen.png
+      white-rook.png
+      white-bishop.png
+      white-knight.png
+      white-pawn.png
+    black/
+      black-king.png
+      black-queen.png
+      black-rook.png
+      black-bishop.png
+      black-knight.png
+      black-pawn.png
+```
+
+The renderer in `discordchessbot.py` loads from these paths automatically.
 
 ## Screenshots
 
