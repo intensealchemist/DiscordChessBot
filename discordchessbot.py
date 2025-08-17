@@ -481,8 +481,6 @@ async def challenge(ctx, opponent: discord.Member):
         )
 
 async def choose_difficulty(ctx):
-    global difficulty
-
     difficulty_view = discord.ui.View()
 
     for level in difficulty_map.keys():
@@ -497,7 +495,7 @@ async def choose_difficulty(ctx):
     difficulty_view.add_item(random_button)
 
     async def on_difficulty_button_click(interaction: discord.Interaction):
-        global difficulty, current_turn
+        global difficulty
 
         button_id = interaction.data[
             'custom_id'] 
@@ -529,7 +527,7 @@ async def choose_difficulty(ctx):
 
 @bot.command(name='move', aliases=['mv','m'])
 async def make_move(ctx, move: str):
-    global board, mode, current_turn, player_color
+    global board, current_turn
 
     # If user is in an active head-to-head game (1v1 or tournament), prioritize that
     if ctx.author.id in games:
@@ -660,7 +658,7 @@ async def make_move(ctx, move: str):
 
 @bot.command(name='ai', aliases=['a'])
 async def ai_move(ctx):
-    global board, current_turn, player_color
+    global current_turn
 
     if board.is_game_over():
         await ctx.send("Game over!")
@@ -692,7 +690,6 @@ async def ai_move(ctx):
 # Command to provide a hint for the next move
 @bot.command(name='hint', aliases=['h'])
 async def provide_hint(ctx):
-    global board
     if board.is_game_over():
         await ctx.send("Game over!")
         return
@@ -967,9 +964,10 @@ async def exit_game(ctx):
     restart_view.add_item(restart_button)
 
     async def on_restart_button_click(interaction: discord.Interaction):
-        await start_interaction(ctx)
-        await interaction.response.send_message("Starting a new game...",
-                                                ephemeral=True)
+        await interaction.response.send_message(
+            "Use `/play` to start Solo/AI or `/challenge @user` to start a PvP match.",
+            ephemeral=True
+        )
 
     restart_button.callback = on_restart_button_click
     await ctx.send("You can start a new game using the button below:",
