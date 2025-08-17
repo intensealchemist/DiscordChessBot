@@ -225,7 +225,6 @@ difficulty_map = {
 
 async def choose_difficulty(ctx):
     """Show buttons to set AI difficulty and configure Stockfish skill level."""
-    global difficulty
     view = discord.ui.View(timeout=30)
 
     # Create one button per difficulty
