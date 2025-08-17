@@ -1,9 +1,9 @@
 # Discord Chess Bot
 
-![Python](https://img.shields.io/badge/Python-99.8%25-blue)
-![Shell](https://img.shields.io/badge/Shell-0.2%25-blue)
-![License](https://img.shields.io/badge/License-MIT-green)
 ![Python Version](https://img.shields.io/badge/Python-3.11-blue)
+![discord.py](https://img.shields.io/badge/discord.py-2.x-5865F2)
+![License](https://img.shields.io/badge/License-MIT-green)
+![Status](https://img.shields.io/badge/status-active-success)
 
 Play chess directly in Discord: Solo practice, vs Stockfish AI, PvP 1v1, and single-elimination tournaments with persistent ELO ratings and game history.
 
@@ -14,7 +14,7 @@ Play chess directly in Discord: Solo practice, vs Stockfish AI, PvP 1v1, and sin
 - Persistent storage (SQLite): players, ratings, W/L/D, games (PGN), tournaments, matches.
 - ELO leaderboard with player rank and W/L/D.
 - Tournament system: create, join, start, bracket view, automatic progression, and tiebreaks on draws.
-- Daily puzzles and analysis helpers (evaluation and best move hint).
+- Hint command to get the engine’s suggested move.
 - Configurable paths via environment variables.
 
 ## Getting Started
@@ -69,38 +69,29 @@ Environment variables used by the bot:
 
 ## Commands Overview
 
-- /play — interactive UI to pick Solo or AI
 - /challenge @user — start a 1v1 match
-- /move e2e4 — make a move (UCI format)
-- /ai — make AI move (if it’s AI’s turn)
+- /move e2e4 — make a move (UCI format). Aliases: /mv, /m
+- /ai — make AI move (if it’s AI’s turn). Alias: /a
 - /hint — get the engine’s suggested move
 - /resign — resign the current game
-- /exit — exit and clear the current game session
-- /leaderboard — top 10 by ELO and your global rank
-- /history — recent games for you
-- /pgn <game_id> — fetch PGN for a game
-- /analyze — evaluation and best move for current position
-- /puzzle_daily, /puzzle_hint — daily puzzle and hint
-- /theme <classic|green|blue> — switch board theme
+- /exit — exit and clear the current game session. Aliases: /quit, /q
+- /leaderboard — top 10 by ELO and your global rank. Aliases: /lb, /l
+- /tournament_create <name> — create a tournament
+- /tournament_join <id> — join a tournament
+- /tournament_start <id> — start the tournament (Round 1)
+- /tournament_bracket <id> — display the current bracket
 
 ### Quick Commands Table
 
 | Command | Description |
 |---|---|
-| /play | Open interactive menu for Solo/AI |
 | /challenge @user | Start a 1v1 match with a user |
-| /move e2e4 | Make a UCI move in the current game |
-| /ai | Engine plays if it is AI's turn |
+| /move e2e4 | Make a UCI move in the current game (aliases: /mv, /m) |
+| /ai | Engine plays if it is AI's turn (alias: /a) |
 | /hint | Show engine's suggested move |
 | /resign | Resign your current game |
-| /exit | Exit and clear current game session |
-| /leaderboard | Top 10 by ELO + your rank |
-| /history | Show your recent games |
-| /pgn <game_id> | Fetch PGN for the specified game |
-| /analyze | Evaluate the current position and show best move |
-| /puzzle_daily | Show the daily chess puzzle |
-| /puzzle_hint | Give a hint for the current puzzle |
-| /theme <name> | Switch board theme (classic, green, blue) |
+| /exit | Exit and clear current game session (aliases: /quit, /q) |
+| /leaderboard | Top 10 by ELO + your rank (aliases: /lb, /l) |
 | /tournament_create <name> | Create a tournament |
 | /tournament_join <id> | Join a tournament |
 | /tournament_start <id> | Start the tournament (Round 1) |
@@ -132,11 +123,11 @@ Flow:
 
 Board images are saved as `chessboard.png` and posted to Discord.
 Piece PNGs are included (e.g., `white-king.png`, `black-queen.png`).
-Themes supported: classic, green, blue. Coordinates are drawn around the board.
+Coordinates are drawn around the board.
 
 ## Screenshots
 
-Below are placeholders for board theme previews. You can generate them by running the bot locally, using `/play` (Solo), then `/theme <name>` and saving the posted `chessboard.png`.
+Below are placeholders for board previews. You can generate them by running the bot locally, starting a game, and saving the posted `chessboard.png`.
 
 Place your screenshots under `assets/` and update the paths below if needed.
 
