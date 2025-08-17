@@ -48,7 +48,7 @@ Windows PowerShell example:
 ```powershell
 $env:DISCORD_BOT_TOKEN = "YOUR_TOKEN_HERE"
 $env:STOCKFISH_PATH = "C:\\path\\to\\stockfish.exe"  # optional
-$env:CHESSBOT_DB = "D:\\data\\chessbot.db"            # optional
+$env:CHESSBOT_DB = "C:\\path\\to\\chessbot.db"            # optional
 ```
 
 4) Run the bot
