@@ -2,3 +2,4 @@ discord.py==2.2.3
 python-chess
 cairosvg
 Pillow
+stockfish

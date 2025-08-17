@@ -12,7 +12,11 @@ from stockfish import Stockfish
 from threading import Thread
 import time
 import threading
- 
+import sqlite3
+import math
+import datetime
+import chess.pgn
+
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix=commands.when_mentioned_or("/", "!", "."),
@@ -20,8 +24,167 @@ bot = commands.Bot(command_prefix=commands.when_mentioned_or("/", "!", "."),
 
 TOKEN = os.getenv('DISCORD_BOT_TOKEN')
 
-stockfish = Stockfish("/usr/games/stockfish")
+# Configure Stockfish path via env; fallback to system PATH
+STOCKFISH_PATH = os.getenv("STOCKFISH_PATH", "stockfish")
+stockfish = Stockfish(STOCKFISH_PATH)
 
+############################
+# Persistence and ELO Setup #
+############################
+
+DB_PATH = os.getenv("CHESSBOT_DB", "chessbot.db")
+
+def init_db():
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute(
+        """
+        CREATE TABLE IF NOT EXISTS players (
+            user_id INTEGER PRIMARY KEY,
+            rating REAL NOT NULL DEFAULT 1200.0,
+            wins INTEGER NOT NULL DEFAULT 0,
+            losses INTEGER NOT NULL DEFAULT 0,
+            draws INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT
+        )
+        """
+    )
+    c.execute(
+        """
+        CREATE TABLE IF NOT EXISTS games (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            white_id INTEGER,
+            black_id INTEGER,
+            result TEXT,
+            pgn TEXT,
+            created_at TEXT
+        )
+        """
+    )
+    # Tournaments
+    c.execute(
+        """
+        CREATE TABLE IF NOT EXISTS tournaments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            guild_id INTEGER,
+            name TEXT,
+            status TEXT, -- created, ongoing, finished
+            created_at TEXT
+        )
+        """
+    )
+    c.execute(
+        """
+        CREATE TABLE IF NOT EXISTS tournament_players (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tournament_id INTEGER,
+            user_id INTEGER
+        )
+        """
+    )
+    c.execute(
+        """
+        CREATE TABLE IF NOT EXISTS tournament_matches (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tournament_id INTEGER,
+            round INTEGER,
+            white_id INTEGER,
+            black_id INTEGER,
+            winner_id INTEGER,
+            status TEXT, -- pending, ongoing, done
+            is_tiebreak INTEGER NOT NULL DEFAULT 0
+        )
+        """
+    )
+    # Ensure schema has is_tiebreak column (for draw replays)
+    try:
+        c.execute("ALTER TABLE tournament_matches ADD COLUMN is_tiebreak INTEGER NOT NULL DEFAULT 0")
+    except sqlite3.OperationalError:
+        # Column likely exists already
+        pass
+    conn.commit()
+    conn.close()
+
+def get_or_create_player(user_id: int):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT user_id, rating, wins, losses, draws FROM players WHERE user_id=?", (user_id,))
+    row = c.fetchone()
+    if not row:
+        c.execute(
+            "INSERT INTO players(user_id, rating, wins, losses, draws, updated_at) VALUES (?, 1200, 0, 0, 0, ?)",
+            (user_id, datetime.datetime.utcnow().isoformat()),
+        )
+        conn.commit()
+        c.execute("SELECT user_id, rating, wins, losses, draws FROM players WHERE user_id=?", (user_id,))
+        row = c.fetchone()
+    conn.close()
+    return row  # (user_id, rating, wins, losses, draws)
+
+def update_player_stats(user_id: int, result: str):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    if result == "win":
+        c.execute("UPDATE players SET wins = wins + 1, updated_at=? WHERE user_id=?", (datetime.datetime.utcnow().isoformat(), user_id))
+    elif result == "loss":
+        c.execute("UPDATE players SET losses = losses + 1, updated_at=? WHERE user_id=?", (datetime.datetime.utcnow().isoformat(), user_id))
+    elif result == "draw":
+        c.execute("UPDATE players SET draws = draws + 1, updated_at=? WHERE user_id=?", (datetime.datetime.utcnow().isoformat(), user_id))
+    conn.commit()
+    conn.close()
+
+def expected_score(r_a: float, r_b: float) -> float:
+    return 1 / (1 + 10 ** ((r_b - r_a) / 400))
+
+def update_elo(white_id: int, black_id: int, result: str, k: int = 32):
+    # result: '1-0' white wins, '0-1' black wins, '1/2-1/2' draw
+    w = get_or_create_player(white_id)
+    b = get_or_create_player(black_id)
+    r_w, r_b = float(w[1]), float(b[1])
+    exp_w = expected_score(r_w, r_b)
+    exp_b = expected_score(r_b, r_w)
+    if result == '1-0':
+        s_w, s_b = 1.0, 0.0
+        update_player_stats(white_id, "win")
+        update_player_stats(black_id, "loss")
+    elif result == '0-1':
+        s_w, s_b = 0.0, 1.0
+        update_player_stats(white_id, "loss")
+        update_player_stats(black_id, "win")
+    else:
+        s_w, s_b = 0.5, 0.5
+        update_player_stats(white_id, "draw")
+        update_player_stats(black_id, "draw")
+
+    new_r_w = r_w + k * (s_w - exp_w)
+    new_r_b = r_b + k * (s_b - exp_b)
+
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    now = datetime.datetime.utcnow().isoformat()
+    c.execute("UPDATE players SET rating=?, updated_at=? WHERE user_id=?", (new_r_w, now, white_id))
+    c.execute("UPDATE players SET rating=?, updated_at=? WHERE user_id=?", (new_r_b, now, black_id))
+    conn.commit()
+    conn.close()
+
+def record_game(white_id: int, black_id: int, result: str, game_board: chess.Board):
+    # Export PGN
+    game = chess.pgn.Game()
+    game.headers["White"] = str(white_id)
+    game.headers["Black"] = str(black_id)
+    game.headers["Result"] = result
+    node = game
+    for mv in game_board.move_stack:
+        node = node.add_variation(mv)
+    pgn_str = str(game)
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute(
+        "INSERT INTO games(white_id, black_id, result, pgn, created_at) VALUES (?, ?, ?, ?, ?)",
+        (white_id, black_id, result, pgn_str, datetime.datetime.utcnow().isoformat()),
+    )
+    conn.commit()
+    conn.close()
 
 @bot.event
 async def on_command_error(ctx, error):
@@ -166,6 +329,7 @@ class Leaderboard:
         self.scores = {}
 
     def update_score(self, player: discord.User, result: str):
+        # Keep legacy in-memory stats for now; persistent ratings handled via DB
         if player not in self.scores:
             self.scores[player] = {"wins": 0, "losses": 0, "draws": 0}
         if result == "win":
@@ -175,25 +339,39 @@ class Leaderboard:
         elif result == "draw":
             self.scores[player]["draws"] += 1
 
-    def display_leaderboard(self):
-        sorted_scores = sorted(self.scores.items(), key=lambda item: item[1]["wins"], reverse=True)
-        leaderboard_str = "🏆 **Leaderboard** 🏆\n"
-        for player, stats in sorted_scores:
-            leaderboard_str += f"{player.mention}: {stats['wins']} Wins, {stats['losses']} Losses, {stats['draws']} Draws\n"
-        return leaderboard_str
+    def display_leaderboard(self, requester_id=None):
+        # Show top 10 by rating from DB and append requester's global rank if provided
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("SELECT user_id, rating, wins, losses, draws FROM players ORDER BY rating DESC LIMIT 10")
+        rows = c.fetchall()
+        extra = ""
+        if requester_id is not None:
+            # Fetch requester rating
+            c.execute("SELECT rating, wins, losses, draws FROM players WHERE user_id=?", (requester_id,))
+            me = c.fetchone()
+            if me:
+                my_rating = float(me[0])
+                # Global rank: 1 + count of players with strictly higher rating
+                c.execute("SELECT COUNT(*) FROM players WHERE rating > ?", (my_rating,))
+                higher = c.fetchone()[0]
+                c.execute("SELECT COUNT(*) FROM players")
+                total = c.fetchone()[0]
+                my_rank = higher + 1
+                extra = f"\nYour rank: {my_rank}/{total} — {my_rating:.0f} ELO"
+        conn.close()
+        if not rows:
+            return "No scores recorded yet!"
+        leaderboard_str = "🏆 ELO Leaderboard 🏆\n"
+        for idx, (uid, rating, wins, losses, draws) in enumerate(rows, start=1):
+            leaderboard_str += f"{idx}. <@{uid}> — {rating:.0f} ELO | {wins}W-{losses}L-{draws}D\n"
+        return leaderboard_str + extra
 
-leaderboard = Leaderboard()
 @bot.command(name='leaderboard',aliases=['lb','l'])
 async def show_leaderboard(ctx):
-    leaderboard_message = leaderboard.display_leaderboard()
-    if leaderboard_message:
-        await ctx.send(leaderboard_message)
-    else:
-        await ctx.send("No scores recorded yet!")
-@bot.command(name='endgame')
-async def end_game(ctx, result: str):
-    leaderboard.update_score(ctx.author, result)
-    await ctx.send(f"{ctx.author.mention}'s score has been updated with a {result}!")
+    leaderboard = Leaderboard()
+    leaderboard_message = leaderboard.display_leaderboard(ctx.author.id)
+    await ctx.send(leaderboard_message)
 
 @bot.command()
 async def resign(ctx):
@@ -204,50 +382,32 @@ async def resign(ctx):
         return
 
     opponent = bot.get_user(game['opponent'])
+    # ELO update only for 1v1 games
+    if game.get('mode') == '1v1':
+        white_id = game['white']
+        black_id = game['black']
+        if ctx.author.id == white_id:
+            result = '0-1'
+        else:
+            result = '1-0'
+        update_elo(white_id, black_id, result)
+        record_game(white_id, black_id, result, game['board'])
+    elif game.get('mode') == 'tournament':
+        white_id = game['white']
+        black_id = game['black']
+        if ctx.author.id == white_id:
+            result = '0-1'
+            winner_id = black_id
+        else:
+            result = '1-0'
+            winner_id = white_id
+        update_elo(white_id, black_id, result)
+        record_game(white_id, black_id, result, game['board'])
+        _complete_tournament_match_and_advance(ctx, game['tournament_id'], game['match_id'], winner_id)
     games.pop(opponent.id, None)
 
     await ctx.send(
         f"{ctx.author.mention} has resigned. {opponent.mention} wins!")
-
-@bot.command(name='play', aliases=['start', 'p'])
-async def start_interaction(ctx):
-    mode_view = discord.ui.View()
-
-    solo_button = discord.ui.Button(label="Solo",
-                                    style=discord.ButtonStyle.primary)
-    ai_button = discord.ui.Button(label="AI",
-                                  style=discord.ButtonStyle.primary)
-    pvp_button = discord.ui.Button(label="1v1",
-                                   style=discord.ButtonStyle.primary)
-    mode_view.add_item(solo_button)
-    mode_view.add_item(ai_button)
-    mode_view.add_item(pvp_button)
-
-    async def on_mode_button_click(interaction: discord.Interaction):
-        global mode, player_color, current_turn
-
-        button_id = interaction.data['custom_id']
-        if button_id == 'Solo':
-            mode = 'solo'
-            await start_solo_game(ctx)
-        elif button_id == 'AI':
-            mode = 'ai'
-            await start_ai_game(ctx)
-        elif button_id == '1v1':
-            mode = '1v1'
-            await ctx.send(
-                f"{ctx.author.mention} has selected 1v1 mode! Use `/challenge @opponent` to challenge another player."
-            )
-
-    solo_button.custom_id = 'Solo'
-    ai_button.custom_id = 'AI'
-    pvp_button.custom_id = '1v1'
-    solo_button.callback = on_mode_button_click
-    ai_button.callback = on_mode_button_click
-    pvp_button.callback = on_mode_button_click
-
-    await ctx.send("Choose a game mode:", view=mode_view)
-
 
 async def start_solo_game(ctx):
     global player_color, current_turn
@@ -260,7 +420,6 @@ async def start_solo_game(ctx):
                    file=discord.File("chessboard.png"))
     await ctx.send("It's your turn to move! Use `/move <move>` to make a move."
                    )
-
 
 async def start_ai_game(ctx):
     global player_color, current_turn
@@ -278,7 +437,6 @@ async def start_ai_game(ctx):
     if player_color == chess.BLACK:
         await ai_move(ctx)
 
-
 @bot.command()
 async def challenge(ctx, opponent: discord.Member):
     if ctx.author == opponent:
@@ -288,10 +446,14 @@ async def challenge(ctx, opponent: discord.Member):
     if ctx.author.id in games or opponent.id in games:
         await ctx.send("One of the players is already in a game!")
         return
+    # Challenger is white by default
     games[ctx.author.id] = {
         'opponent': opponent.id,
         'board': chess.Board(),
-        'turn': ctx.author.id
+        'turn': ctx.author.id,
+        'mode': '1v1',
+        'white': ctx.author.id,
+        'black': opponent.id
     }
     games[opponent.id] = games[ctx.author.id] 
 
@@ -317,18 +479,6 @@ async def challenge(ctx, opponent: discord.Member):
         await ctx.send(
             f"{opponent.mention} accepted the challenge! {ctx.author.mention}, it's your turn to move! Use `/move <move>` to make a move."
         )
-
-@bot.command(name='guide')
-async def show_guide(ctx):
-    guide_text = ("Here are the available commands:\n"
-                  "`/mode <solo|ai>` - Select the game mode.\n"
-                  "`/start` - Start a new chess game.\n"
-                  "`/move <e2e4>` - Make a move using UCI format.\n"
-                  "`/ai` - Let AI make a move (only in AI mode).\n"
-                  "`/hint` - Get a hint for the next best move.\n"
-                  "`/exit` - Exit the game.\n"
-                  "`/challenge` - challenge another player for a 1v1 game.\n")
-    await ctx.send(guide_text)
 
 async def choose_difficulty(ctx):
     global difficulty
@@ -377,15 +527,12 @@ async def choose_difficulty(ctx):
     await ctx.send("Please choose the AI difficulty level:",
                    view=difficulty_view)
 
-
 @bot.command(name='move', aliases=['mv','m'])
 async def make_move(ctx, move: str):
     global board, mode, current_turn, player_color
 
-    if mode is None:
-        await ctx.send("Please select a mode using `/play`.")
-        return
-    if mode == 'duo':
+    # If user is in an active head-to-head game (1v1 or tournament), prioritize that
+    if ctx.author.id in games:
         game = games.get(ctx.author.id)
         if not game:
             await ctx.send("You're not in a game!")
@@ -399,10 +546,14 @@ async def make_move(ctx, move: str):
 
         board = game['board']
 
-    elif current_turn != player_color:
+    elif mode in ('solo', 'ai') and current_turn != player_color:
         await ctx.send(
             "It's not your turn yet. Please wait for the other player to move."
         )
+        return
+    elif mode not in ('solo', 'ai'):
+        # Not in solo/ai and not in games -> no active game
+        await ctx.send("You're not in a game. Use `/play` or `/challenge @user`.")
         return
 
     try:
@@ -418,8 +569,27 @@ async def make_move(ctx, move: str):
                            file=discord.File("chessboard.png"))
             if board.is_checkmate():
                 await ctx.send("Checkmate! Game over.")
-                if mode == 'duo':
-                   
+                if mode == '1v1':
+                    # Determine result: after push, side to move is checkmated
+                    white_id = game['white']
+                    black_id = game['black']
+                    loser_is_white = (current_turn == chess.WHITE)
+                    result = '0-1' if loser_is_white else '1-0'
+                    update_elo(white_id, black_id, result)
+                    record_game(white_id, black_id, result, board)
+                    game = games.pop(ctx.author.id, None)
+                    if game:
+                        opponent = bot.get_user(game['opponent'])
+                        games.pop(opponent.id, None)
+                elif mode == 'tournament':
+                    white_id = game['white']
+                    black_id = game['black']
+                    loser_is_white = (current_turn == chess.WHITE)
+                    result = '0-1' if loser_is_white else '1-0'
+                    winner_id = black_id if loser_is_white else white_id
+                    update_elo(white_id, black_id, result)
+                    record_game(white_id, black_id, result, board)
+                    _complete_tournament_match_and_advance(ctx, game['tournament_id'], game['match_id'], winner_id)
                     game = games.pop(ctx.author.id, None)
                     if game:
                         opponent = bot.get_user(game['opponent'])
@@ -431,18 +601,48 @@ async def make_move(ctx, move: str):
                 await ctx.send(
                     "Draw! The game is a stalemate or ended due to insufficient material."
                 )
-                if mode == 'duo':
+                if mode == '1v1':
+                    white_id = game['white']
+                    black_id = game['black']
+                    update_elo(white_id, black_id, '1/2-1/2')
+                    record_game(white_id, black_id, '1/2-1/2', board)
+                    game = games.pop(ctx.author.id, None)
+                    if game:
+                        opponent = bot.get_user(game['opponent'])
+                        games.pop(opponent.id, None)
+                elif mode == 'tournament':
+                    white_id = game['white']
+                    black_id = game['black']
+                    update_elo(white_id, black_id, '1/2-1/2')
+                    record_game(white_id, black_id, '1/2-1/2', board)
+                    # Check if this match was already a tiebreak
+                    info = _get_match_info(game['match_id'])
+                    t_id = game['tournament_id']
+                    if info and not info['is_tiebreak']:
+                        # Mark current match done (draw) and start a tiebreak with swapped colors
+                        conn_tb = sqlite3.connect(DB_PATH)
+                        c_tb = conn_tb.cursor()
+                        c_tb.execute("UPDATE tournament_matches SET status='done' WHERE id=?", (game['match_id'],))
+                        conn_tb.commit()
+                        conn_tb.close()
+                        await ctx.send("Starting a tiebreak game with swapped colors due to draw.")
+                        _create_tiebreak_match_and_start(ctx, t_id, info['round'], black_id, white_id)
+                    else:
+                        # Tiebreak also drawn -> randomly advance
+                        winner_id = random.choice([white_id, black_id])
+                        await ctx.send(f"Tiebreak draw resolved randomly: <@{winner_id}> advances.")
+                        _complete_tournament_match_and_advance(ctx, t_id, game['match_id'], winner_id)
+                    # Clear active game states for both players
                     game = games.pop(ctx.author.id, None)
                     if game:
                         opponent = bot.get_user(game['opponent'])
                         games.pop(opponent.id, None)
                 return
 
-
             if mode == 'ai' and current_turn != player_color and not board.is_game_over(
             ):
                 await ai_move(ctx)
-            elif mode == 'duo':
+            elif mode == '1v1' or mode == 'tournament':
                 opponent_id = game['opponent']
                 games[opponent_id]['board'] = board
                 games[opponent_id]['turn'] = current_turn
@@ -457,7 +657,6 @@ async def make_move(ctx, move: str):
             await ctx.send("Invalid move. The move is not legal. Try again.")
     except ValueError:
         await ctx.send("Invalid move format. Use UCI format like `e2e4`.")
-
 
 @bot.command(name='ai', aliases=['a'])
 async def ai_move(ctx):
@@ -490,7 +689,6 @@ async def ai_move(ctx):
     except Exception as e:
         await ctx.send(f"Error with AI move: {e}")
 
-
 # Command to provide a hint for the next move
 @bot.command(name='hint', aliases=['h'])
 async def provide_hint(ctx):
@@ -505,6 +703,247 @@ async def provide_hint(ctx):
     except Exception as e:
         await ctx.send(f"Error with hint: {e}")
 
+###########################
+# Tournament Functionality #
+###########################
+
+def _get_tournament_players(t_id: int):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT user_id FROM tournament_players WHERE tournament_id=?", (t_id,))
+    rows = [r[0] for r in c.fetchall()]
+    conn.close()
+    return rows
+
+def _create_matches_for_round(t_id: int, round_no: int, players: list[int]):
+    pairs = []
+    shuffled = players[:]
+    random.shuffle(shuffled)
+    # If odd, give last a bye (auto-advance)
+    bye = None
+    if len(shuffled) % 2 == 1:
+        bye = shuffled.pop()
+    for i in range(0, len(shuffled), 2):
+        pairs.append((shuffled[i], shuffled[i+1]))
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    for w, b in pairs:
+        c.execute("INSERT INTO tournament_matches(tournament_id, round, white_id, black_id, winner_id, status) VALUES (?, ?, ?, ?, NULL, 'pending')",
+                  (t_id, round_no, w, b))
+    if bye is not None:
+        # Create a dummy match with bye winner
+        c.execute("INSERT INTO tournament_matches(tournament_id, round, white_id, black_id, winner_id, status) VALUES (?, ?, ?, ?, ?, 'done')",
+                  (t_id, round_no, bye, None, bye))
+    conn.commit()
+    conn.close()
+
+def _all_round_done(t_id: int, round_no: int) -> bool:
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT COUNT(*) FROM tournament_matches WHERE tournament_id=? AND round=? AND status!='done'", (t_id, round_no))
+    remaining = c.fetchone()[0]
+    conn.close()
+    return remaining == 0
+
+def _get_current_round(t_id: int) -> int:
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT MAX(round) FROM tournament_matches WHERE tournament_id=?", (t_id,))
+    row = c.fetchone()
+    conn.close()
+    return row[0] if row and row[0] is not None else 0
+
+def _winners_of_round(t_id: int, round_no: int) -> list[int]:
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT winner_id FROM tournament_matches WHERE tournament_id=? AND round=? AND winner_id IS NOT NULL", (t_id, round_no))
+    rows = [r[0] for r in c.fetchall()]
+    conn.close()
+    return rows
+
+def _start_pending_matches_in_round(ctx, t_id: int, round_no: int):
+
+    # Start all pending matches sequentially (players play matches when they use /move; we set up games state)
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT id, white_id, black_id FROM tournament_matches WHERE tournament_id=? AND round=? AND status='pending'", (t_id, round_no))
+    matches = c.fetchall()
+    # Mark as ongoing
+    for mid, w, b in matches:
+        c.execute("UPDATE tournament_matches SET status='ongoing' WHERE id=?", (mid,))
+        # Set up a game for both players
+        local_board = chess.Board()
+        games[w] = {'opponent': b, 'board': local_board, 'turn': w, 'mode': 'tournament', 'white': w, 'black': b, 'tournament_id': t_id, 'match_id': mid}
+        games[b] = games[w]
+    conn.commit()
+    conn.close()
+    if matches:
+        lines = [f"Starting Round {round_no} matches:"]
+        for mid, w, b in matches:
+            lines.append(f"Match #{mid}: <@{w}> (White) vs <@{b}> (Black) — White to move. Use /move <uci>")
+        asyncio.create_task(ctx.send("\n".join(lines)))
+
+def _get_match_info(match_id: int):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT round, white_id, black_id, is_tiebreak, tournament_id FROM tournament_matches WHERE id=?", (match_id,))
+    row = c.fetchone()
+    conn.close()
+    if not row:
+        return None
+    return {
+        'round': row[0],
+        'white': row[1],
+        'black': row[2],
+        'is_tiebreak': int(row[3]) if row[3] is not None else 0,
+        'tournament_id': row[4]
+    }
+
+def _create_tiebreak_match_and_start(ctx, t_id: int, round_no: int, white_id: int, black_id: int):
+    # Create tiebreak match with immediate start (status ongoing) and set up games
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute(
+        "INSERT INTO tournament_matches(tournament_id, round, white_id, black_id, winner_id, status, is_tiebreak) VALUES (?, ?, ?, ?, NULL, 'ongoing', 1)",
+        (t_id, round_no, white_id, black_id)
+    )
+    match_id = c.lastrowid
+    conn.commit()
+    conn.close()
+    local_board = chess.Board()
+    games[white_id] = {
+        'opponent': black_id,
+        'board': local_board,
+        'turn': white_id,
+        'mode': 'tournament',
+        'white': white_id,
+        'black': black_id,
+        'tournament_id': t_id,
+        'match_id': match_id
+    }
+    games[black_id] = games[white_id]
+    asyncio.create_task(ctx.send(f"Tiebreak started: Match #{match_id} (TB) — <@{white_id}> (White) vs <@{black_id}> (Black). White to move."))
+
+def _complete_tournament_match_and_advance(ctx, t_id: int, match_id: int, winner_id: int):
+    # Mark match done and set winner
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("UPDATE tournament_matches SET winner_id=?, status='done' WHERE id=?", (winner_id, match_id))
+    conn.commit()
+    # Determine current round
+    c.execute("SELECT round FROM tournament_matches WHERE id=?", (match_id,))
+    row = c.fetchone()
+    round_no = row[0] if row else 1
+    conn.close()
+    # If all matches in round done, create next round or finish
+    if _all_round_done(t_id, round_no):
+        winners = _winners_of_round(t_id, round_no)
+        if len(winners) <= 1:
+            # Tournament finished
+            asyncio.create_task(ctx.send(f"🏆 Tournament #{t_id} winner: <@{winners[0]}>!"))
+            conn2 = sqlite3.connect(DB_PATH)
+            c2 = conn2.cursor()
+            c2.execute("UPDATE tournaments SET status='finished' WHERE id=?", (t_id,))
+            conn2.commit()
+            conn2.close()
+        else:
+            next_round = round_no + 1
+            _create_matches_for_round(t_id, next_round, winners)
+            asyncio.create_task(ctx.send(f"All matches in Round {round_no} completed. Creating Round {next_round}..."))
+            _start_pending_matches_in_round(ctx, t_id, next_round)
+
+def _bracket_text(t_id: int) -> str:
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT round, id, white_id, black_id, winner_id, status, is_tiebreak FROM tournament_matches WHERE tournament_id=? ORDER BY round, id", (t_id,))
+    rows = c.fetchall()
+    conn.close()
+    if not rows:
+        return "No matches yet."
+    out = []
+    cur_round = None
+    for rnd, mid, w, b, win, st, tb in rows:
+        if rnd != cur_round:
+            cur_round = rnd
+            out.append(f"Round {rnd}:")
+        tag = " (TB)" if tb else ""
+        vs = f"<@{w}> vs <@{b}>{tag}" if b is not None else f"<@{w}> gets a bye"
+        if st == 'done':
+            line = f"  Match #{mid}: {vs} — Winner: <@{win}>"
+        else:
+            line = f"  Match #{mid}: {vs} — {st.title()}"
+        out.append(line)
+    return "\n".join(out)
+
+@bot.command(name='tournament_create')
+async def tournament_create(ctx, *, name: str):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("INSERT INTO tournaments(guild_id, name, status, created_at) VALUES (?, ?, 'created', ?)", (ctx.guild.id if ctx.guild else 0, name, datetime.datetime.utcnow().isoformat()))
+    t_id = c.lastrowid
+    conn.commit()
+    conn.close()
+    await ctx.send(f"Tournament created: #{t_id} — {name}. Players can join with `/tournament_join {t_id}`")
+
+@bot.command(name='tournament_join')
+async def tournament_join(ctx, tournament_id: int):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    # Ensure tournament exists and not started
+    c.execute("SELECT status FROM tournaments WHERE id=?", (tournament_id,))
+    row = c.fetchone()
+    if not row:
+        conn.close()
+        await ctx.send("Tournament not found.")
+        return
+    if row[0] != 'created':
+        conn.close()
+        await ctx.send("Tournament already started or finished.")
+        return
+    # Add player if not already added
+    c.execute("SELECT 1 FROM tournament_players WHERE tournament_id=? AND user_id=?", (tournament_id, ctx.author.id))
+    exists = c.fetchone()
+    if not exists:
+        c.execute("INSERT INTO tournament_players(tournament_id, user_id) VALUES (?, ?)", (tournament_id, ctx.author.id))
+        conn.commit()
+        await ctx.send(f"You have joined tournament #{tournament_id}.")
+    else:
+        await ctx.send("You are already registered in this tournament.")
+    conn.close()
+
+@bot.command(name='tournament_start')
+async def tournament_start(ctx, tournament_id: int):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT status FROM tournaments WHERE id=?", (tournament_id,))
+    row = c.fetchone()
+    if not row:
+        conn.close()
+        await ctx.send("Tournament not found.")
+        return
+    if row[0] != 'created':
+        conn.close()
+        await ctx.send("Tournament already started or finished.")
+        return
+    # Get players (need at least 2)
+    c.execute("SELECT user_id FROM tournament_players WHERE tournament_id=?", (tournament_id,))
+    players = [r[0] for r in c.fetchall()]
+    if len(players) < 2:
+        conn.close()
+        await ctx.send("Need at least 2 players to start.")
+        return
+    # Create round 1 matches
+    _create_matches_for_round(tournament_id, 1, players)
+    c.execute("UPDATE tournaments SET status='ongoing' WHERE id=?", (tournament_id,))
+    conn.commit()
+    conn.close()
+    await ctx.send(f"Tournament #{tournament_id} started. Generating Round 1 matches...")
+    _start_pending_matches_in_round(ctx, tournament_id, 1)
+
+@bot.command(name='tournament_bracket')
+async def tournament_bracket(ctx, tournament_id: int):
+    txt = _bracket_text(tournament_id)
+    await ctx.send(f"Bracket for Tournament #{tournament_id}:\n{txt}")
 
 # Command to exit the game
 @bot.command(name='exit', aliases=['quit', 'q'])
@@ -536,9 +975,10 @@ async def exit_game(ctx):
     await ctx.send("You can start a new game using the button below:",
                    view=restart_view)
 
-
 @bot.event
 async def on_ready():
     print(f'Logged in as {bot.user} (ID: {bot.user.id})')
     print('------')
+    # Initialize persistence
+    init_db()
 bot.run(TOKEN)
