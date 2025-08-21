@@ -64,8 +64,8 @@ Environment variables used by the bot:
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | DISCORD_BOT_TOKEN | Yes | — | Discord bot token for authentication. |
-| STOCKFISH_PATH | No | stockfish | Path to the Stockfish binary or command on PATH. |
-| CHESSBOT_DB | No | chessbot.db | SQLite database file path for persistence. |
+| STOCKFISH_PATH | Yes | stockfish | Path to the Stockfish binary or command on PATH. |
+| CHESSBOT_DB | Yes | chessbot.db | SQLite database file path for persistence. |
 
 ## Commands Overview
 
