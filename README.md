@@ -165,19 +165,19 @@ Here are some live screenshots from the bot running locally.
 
 - AI game start and board render
 
-  ![AI Game Start](assets/Screenshot%202025-08-17%20184027.png)
+  ![AI Game Start](assets/Start.png)
 
 - Difficulty selection and actions
 
-  ![Difficulty Selection](assets/Screenshot%202025-08-17%20184357.png)
+  ![Difficulty Selection](assets/move.png)
 
 - Move updates and board refresh
 
-  ![Move Update](assets/Screenshot%202025-08-17%20184432.png)
+  ![Move Update](assets/aimove.png)
 
-- Additional UI/flow
+- Challenge other player
 
-  ![Flow](assets/Screenshot%202025-08-17%20185056.png)
+  ![Flow](assets/challenge.png)
 
 ## Deployment
 
